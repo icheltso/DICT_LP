@@ -1,0 +1,358 @@
+from sympy import *
+import numpy as np
+import pprint
+def extractConst(f,X):                         #Obtain constant term from an expression
+    temp = f
+    shp = X.shape[0]
+    for i in range(0,shp):
+        temp = temp.subs(X[i],0)
+        
+    return temp
+
+def extractCoeffs(f,X):                        #Obtain coefficients of all x_i in expression
+    shp = X.shape[0]
+    extcoef = np.zeros(shp)
+    for i in range(0,shp):
+        extcoef[i] = f.coeff(X[i])
+        
+    return extcoef
+
+def chooseEntering(f,X,degen):
+    if (degen == 1):
+        for i in range(0,X.shape[0]):
+            if (f.coeff(X[i]) < 0):
+                print('This is a degenerate vertex!')
+                return i                          #Degeneracy: Bland's rule
+            
+    else:
+        return np.argmin(extractCoeffs(f,X))      #NonDegeneracy: Choose smallest reduced cost
+    
+def chooseLeaving(indx,constr,X,B):                  #Either returns index of smallest minratio or -1 if unbounded
+    shp = constr.shape[0]
+    ratios = -np.ones(shp)                         #Initialize ratios as -1. These get filtered through later
+    entVarcoef = np.zeros(shp)
+    for i in range(0,shp):
+        entVar = extractCoeffs(constr[i],X)
+        entVarcoef[i] = entVar[indx]
+        
+    if ((entVarcoef >= 0).all()):
+        return -1
+    
+    #print('value of entering coefficients for ratio: {}'.format(entVarcoef))
+        
+    for i in range(0,shp):
+        BasicVal = extractConst(constr[i],X)
+        #print('value of basic variable for ratio: {}'.format(BasicVal))
+        if (entVarcoef[i] < 0):
+            ratios[i] = -BasicVal / entVarcoef[i]
+            
+    #print('Unmodified ratios: {}'.format(ratios))
+    chosen = np.where(ratios >= 0, ratios, np.inf).argmin()
+    #print(chosen)
+    
+    return int(B[chosen])                            #Filter away the -1 values from the beginning and choose min ratio index
+            
+
+def extractBasicValues(B,constr,X):
+    shp = X.shape[0]
+    basicvals = zeros(shp,1)
+    for i in range(0,shp):
+        if (np.any(B == i)):
+            basicvals[i] = extractConst(constr[np.where(B == i)[0][0]],X)
+        
+    return basicvals
+
+
+
+
+#The function below take input in the form of an LP in standard form. Specifically, the input is the sympy vectors c, A, b and the starting vector xstart.
+#All input vectors must be column vectors.
+#To solve a Phase-I problem, refer to Phase12 method below.
+#If your standard form is incorrect it will not throw an error, so beware.
+#The function prints out every iteration of the dictionary simplex method and returns the values of variables if it has finite optimal value.
+#The output of this function is a block matrix:
+# | 'z' z |
+# |  B  D |, which is a representation of the final dictionary. This is used as input for the Phase12 method.
+def Dictionary_Simplex(c,A,b,xstart):
+    chck1 = A*xstart
+    if (chck1 != b):
+        print('Starting Solution Infeasible')
+        return None
+    
+    numvars = A.shape
+    syms = symbols('x(1:{0})'.format(numvars[1]+1))
+    X = Matrix(syms)
+    constr = A*X
+    ctx = transpose(c)*X
+    ctx = ctx[0]
+    B = np.zeros(numvars[0])
+    N = np.zeros(numvars[1]-numvars[0])
+    Bvars = zeros(numvars[0],1)
+    NBvars = zeros(numvars[1]-numvars[0],1)
+    counterB = 0
+    counterNB = 0
+    for i in range(0,numvars[1]):
+        if(xstart[i] != 0):
+            B[counterB] = i
+            Bvars[counterB] = X[i]
+            counterB += 1
+            
+        else:
+            N[counterNB] = i
+            NBvars[counterNB] = X[i]
+            counterNB += 1
+    
+    
+    #print('Dictionary 1')
+    Bforshow = B + 1
+    Nforshow = N + 1
+    #print('The new basic variables are')
+    #display(Bvars)
+    ls = solve(constr-b,Bvars)
+    #print('In terms of the Non-Basic variables they are')
+    #display(ls)
+    new_const = Bvars.subs(ls)
+    z = ctx.subs(ls)
+    #print('The objective function looks like')
+    #display(z)
+    zval = extractConst(z,X)
+    zcoef = extractCoeffs(z,X)
+    print('Dictionary 1 looks like this:')
+    filler = Matrix(['z'])
+    fillerz = Matrix([z])
+    outputmat = BlockMatrix([[filler,fillerz],[Bvars,new_const]]).as_explicit()
+    display(outputmat)
+    print('B = {0}'.format(Bforshow))
+    print('N = {0}'.format(Nforshow))
+    dicounter = 2
+    while ((zcoef < 0).any()):
+        degen = 0
+        shp = new_const.shape[0]
+        #Degeneracy Check
+        for i in range(0, shp):
+            if(extractConst(new_const[i],X) == 0):
+                degen = 1
+        
+        #Choose Entering Variable
+        indx = chooseEntering(z,X,degen)
+        print('{0} is entering'.format(X[indx]))
+        
+        #Choose Leaving Variable
+        indx2 = chooseLeaving(indx,new_const,X,B)
+        if (indx2 == -1):
+            print('Problem is unbounded along d, where d_j = 1 for j = {0} and 0 for other Non-Basic j. d_B = -(A_B)^(-1)*A_j'.format(indx))
+            return None
+        
+        print('{0} is leaving \n\n'.format(X[indx2]))
+        
+        Bvars_old = Bvars[:,:]
+        Bvar_ind = np.where(B==indx2)[0][0]
+        B[B == indx2] = indx
+        #print('Dictionary {}'.format(dicounter))
+        Bforshow = B + 1
+        #print('B = {0}'.format(Bforshow))
+        Nvar_ind = np.where(N==indx)[0][0]
+        N[N == indx] = indx2
+        Nforshow = N + 1
+        #print('N = {0}'.format(Nforshow))
+        Bvars[Bvar_ind] = X[indx]
+        #print('The new basic variables are')
+        #display(Bvars)
+        NBvars[Nvar_ind] = X[indx2]
+        ls = solve(new_const-Bvars_old,Bvars)
+        #print('In terms of the Non-Basic variables they are')
+        #display(ls)
+        new_const = Bvars.subs(ls)
+        z = z.subs(ls)
+        #print('The objective function looks like')
+        #display(z)
+        zcoef = extractCoeffs(z,X)
+        zval = extractConst(z,X)
+        print('Dictionary {0} looks like this:'.format(dicounter))
+        filler = Matrix(['z'])
+        fillerz = Matrix([z])
+        outputmat = BlockMatrix([[filler,fillerz],[Bvars,new_const]]).as_explicit()
+        display(outputmat)
+        print('B = {0}'.format(Bforshow))
+        print('N = {0}'.format(Nforshow))
+        dicounter += 1
+        
+    
+    s = 'Finite optimal value found. z* = {0}.'.format(zval)
+    print(s)
+    #print('The final dictionary looks like this:')
+    filler = Matrix(['z'])
+    fillerz = Matrix([z])
+    outputmat = BlockMatrix([[filler,fillerz],[Bvars,new_const]]).as_explicit()
+    return outputmat
+
+
+#Phase 1 simplex dictionary solver for problems where no trivial starting solution is available.
+def Phase12(c,A,b):
+    rows = A.shape[0]
+    cols = A.shape[1]
+    Aref = BlockMatrix([[A,eye(rows)]]).as_explicit()         #Add in artificial variables
+    numvars = Aref.shape
+    syms = symbols('x(1:{0})'.format(numvars[1]+1))
+    X = Matrix(syms)
+    nart_vars = X[0:cols,:]
+    nart_set = nart_vars.atoms()
+    artvars = X[cols:X.shape[0],:]
+    art_set = artvars.atoms()
+    cbase = zeros(cols,1)
+    cphase = ones(rows,1)
+    ctot = BlockMatrix([[cbase],[cphase]]).as_explicit()     #objective function as sum of artificial variables
+    xstphase = BlockMatrix([[cbase],[b]]).as_explicit()      #Starting vector (0,b)
+    print('Begin Phase I')
+    K = Dictionary_Simplex(ctot,Aref,b,xstphase)
+    z = K[0,1]
+    oldbasis = K[1:rows+1,0]
+    new_const = K[1:rows+1,1]
+    oldbasis_set = oldbasis.atoms()
+    basic_art = art_set.intersection(oldbasis_set)
+    if (extractConst(z,X) > 0):
+        print('Since optimal value of Phase I problem is positive, the original problem is infeasible!')
+        return None
+    
+    print('Since the optimal value of the Phase I problem is 0, the Phase II problem is feasible!')
+
+    
+    Bvars = oldbasis[:,:]
+    Bvars = Bvars.as_mutable()
+    
+    for k in basic_art:
+        for i in range(0,oldbasis.shape[0]):
+            flipped = 0
+            if (oldbasis[i] == k):
+                const_set = new_const[i].atoms()
+                nart_useful = const_set.intersection(nart_set)
+                for j in range(0,nart_vars.shape[0]):
+                    if ((nart_vars[j] in nart_useful) and flipped == 0):
+                        Bvars[i] = nart_vars[j]
+                        nart_set.remove(nart_vars[j])
+                        flipped = 1
+                        
+    new_const = new_const.as_mutable()
+    
+    if (oldbasis != Bvars):
+        print('Optimal vertex contains artificial variables. Swapping for original variables...')
+        ls2 = solve(new_const-oldbasis,Bvars)
+        new_const = Bvars.subs(ls2)
+        
+    
+    for i in range(0,new_const.shape[0]):                   #Remove artificial variables from constraints
+        new_const[i,0] = extractConst(new_const[i],artvars)
+        
+    
+    ls = solve(new_const-Bvars,Bvars)
+    X = nart_vars[:,:]
+    z = transpose(c)*X
+    z = z[0]
+    z = z.subs(ls)
+    B = np.zeros(rows)
+    N = np.zeros(cols-rows)
+    NBvars = zeros(cols-rows,1)
+    Bset = Bvars.atoms()
+    counter = 0
+    counterNB = 0
+    for j in range(0,X.shape[0]):
+        counter = 0
+        for i in range(0,Bvars.shape[0]):
+            if (X[j] == Bvars[i]):
+                B[i] = j
+            else:
+                counter += 1
+                
+        if(counter == Bvars.shape[0]):
+            N[counterNB] = j
+            NBvars[counterNB] = X[j]
+            counterNB += 1
+            
+            
+    xstart = extractBasicValues(B,new_const,X)
+    print('Phase I obtained starting vertex:')
+    display(xstart)
+    
+    
+        
+        
+    print('\n\nBegin Phase II')
+    #print('Dictionary I')
+    Bforshow = B + 1
+    Nforshow = N + 1
+    #print('The new basic variables are')
+    #display(Bvars)
+    #print('In terms of the Non-Basic variables they are')
+    #display(ls)
+    #print('The objective function looks like')
+    #display(z)
+    zval = extractConst(z,X)
+    zcoef = extractCoeffs(z,X)
+    print('Dictionary 1 looks like this:')
+    filler = Matrix(['z'])
+    fillerz = Matrix([z])
+    outputmat = BlockMatrix([[filler,fillerz],[Bvars,new_const]]).as_explicit()
+    display(outputmat)
+    print('B = {0}'.format(Bforshow))
+    print('N = {0}'.format(Nforshow))
+    dicounter = 2
+    while ((zcoef < 0).any()):
+        degen = 0
+        shp = new_const.shape[0]
+        #Degeneracy Check
+        for i in range(0, shp):
+            if(extractConst(new_const[i],X) == 0):
+                degen = 1
+        
+        #Choose Entering Variable
+        indx = chooseEntering(z,X,degen)
+        print('{0} is entering'.format(X[indx]))
+        
+        #Choose Leaving Variable
+        indx2 = chooseLeaving(indx,new_const,X,B)
+        if (indx2 == -1):
+            print('Problem is unbounded along d, where d_j = 1 for j = {0} and 0 for other Non-Basic j. d_B = -(A_B)^(-1)*A_j'.format(indx))
+            return None
+        
+        print('{0} is leaving \n\n'.format(X[indx2]))
+        
+        Bvars_old = Bvars[:,:]
+        Bvar_ind = np.where(B==indx2)[0][0]
+        B[B == indx2] = indx
+        #print('Dictionary {}'.format(dicounter))
+        Bforshow = B + 1
+        #print('B = {0}'.format(Bforshow))
+        Nvar_ind = np.where(N==indx)[0][0]
+        N[N == indx] = indx2
+        Nforshow = N + 1
+        #print('N = {0}'.format(Nforshow))
+        Bvars[Bvar_ind] = X[indx]
+        #print('The new basic variables are')
+        #display(Bvars)
+        NBvars[Nvar_ind] = X[indx2]
+        ls = solve(new_const-Bvars_old,Bvars)
+        #print('In terms of the Non-Basic variables they are')
+        #display(ls)
+        new_const = Bvars.subs(ls)
+        z = z.subs(ls)
+        #print('The objective function looks like')
+        #display(z)
+        zcoef = extractCoeffs(z,X)
+        zval = extractConst(z,X)
+        print('Dictionary {0} looks like this:'.format(dicounter))
+        filler = Matrix(['z'])
+        fillerz = Matrix([z])
+        outputmat = BlockMatrix([[filler,fillerz],[Bvars,new_const]]).as_explicit()
+        display(outputmat)
+        print('B = {0}'.format(Bforshow))
+        print('N = {0}'.format(Nforshow))
+        dicounter += 1
+        
+    
+    s = 'Finite Optimal Value Found. This is {0}'.format(zval)
+    print(s)
+    #print('The final dictionary looks like this:')
+    filler = Matrix(['z'])
+    fillerz = Matrix([z])
+    outputmat = BlockMatrix([[filler,fillerz],[Bvars,new_const]]).as_explicit()
+    return outputmat
